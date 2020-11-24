@@ -163,6 +163,11 @@ ${message_infos_array}
         }
     }   
 
+    public interface IMAVLinkMessageStruct
+    {
+        MAVLink.MAVLINK_MSG_ID MsgID { get; }
+    };
+
     public enum MAVLINK_MSG_ID 
     {
 ${message_names_enum}
@@ -172,14 +177,17 @@ ${message_names_enum}
 
 
 def generate_message_enum_types(xml):
-    print "generate_message_enum_types: " + xml.filename
+    print("generate_message_enum_types: " + xml.filename)
     for m in xml.message:
         for fld in m.fields:
             if fld.array_length == 0:
                 fld.type = map[fld.type]
+                tmp_enumtype = fld.type
+            else:
+                tmp_enumtype = map[fld.type]
             if fld.enum != "":
-                enumtypes[fld.enum] = fld.type
-                print fld.enum + " is type " + fld.type
+                enumtypes[fld.enum] = tmp_enumtype
+                print(fld.enum + " is type " + tmp_enumtype)
 
 def cleanText(text):
     text = text.replace("\n"," ")
@@ -187,7 +195,7 @@ def cleanText(text):
     return text.replace("\"","'")
 
 def generate_message_enums(f, xml): 
-    print "generate_message_enums: " + xml.filename
+    print("generate_message_enums: " + xml.filename)
     # add some extra field attributes for convenience with arrays
     for m in xml.enum:
         m.description = cleanText(m.description)
@@ -229,8 +237,11 @@ def generate_message_h(f, directory, m):
 
     [StructLayout(LayoutKind.Sequential,Pack=1,Size=${wire_length})]
     ///<summary> ${description} </summary>
-    public struct mavlink_${name_lower}_t
+    public struct mavlink_${name_lower}_t : IMAVLinkMessageStruct
     {
+
+        public MAVLink.MAVLINK_MSG_ID MsgID => MAVLink.MAVLINK_MSG_ID.${name};
+
         public mavlink_${name_lower}_t(${{ordered_fields:${type} ${name},}}) 
         {
             ${{ordered_fields:  this.${name} = ${name};
@@ -315,7 +326,7 @@ def generate_one(fh, basename, xml):
                 f.putname = f.name
             else:
                 f.putname = f.const_value
-    
+
     for m in xml.message:
         generate_message_h(fh, directory, m)
 
