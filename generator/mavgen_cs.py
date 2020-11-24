@@ -136,6 +136,12 @@ def generate_Deserialization(outf, messages):
         outf.write("\n\t\tinternal static MavlinkMessage Deserialize_%s(byte[] bytes, int offset)\n\t\t{\n" % (m.name))
         offset = 0
     
+        outf.write("\t\t\tif (bytes.Length - offset < %i)\n" % (m.wire_length))
+        outf.write("\t\t\t{\n");
+        outf.write("\t\t\t\t// Messasge payload has been truncated\n");
+        outf.write("\t\t\t\tArray.Resize(ref bytes, %i);\n" % (m.wire_length) );
+        outf.write("\t\t\t}\n");
+
         outf.write("\t\t\treturn new %s\n" % classname)
         outf.write("\t\t\t{\n")
 

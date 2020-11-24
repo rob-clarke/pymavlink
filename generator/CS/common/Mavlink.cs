@@ -16,10 +16,12 @@ namespace MavLink
     {
        private byte[] leftovers;
 
-       /// <summary>
-       /// Event raised when a message is decoded successfully
-       /// </summary>
-       public event PacketReceivedEventHandler PacketReceived;
+        private static readonly FrameworkBitConverter bitconverter = new FrameworkBitConverter();
+
+        /// <summary>
+        /// Event raised when a message is decoded successfully
+        /// </summary>
+        public event PacketReceivedEventHandler PacketReceived;
 
        /// <summary>
        /// Total number of packets successfully received so far
@@ -45,7 +47,11 @@ namespace MavLink
         // The current packet sequence number for transmission
         // public so it can be manipulated for testing
        // Normal usage would only read this
-        public byte txPacketSequence; 
+        public byte txPacketSequence;
+
+        // Track if this connection is using MAVLink 2
+        // Initial state is false prior to handshake
+       private bool isMavlink2 = false;
 
        /// <summary>
        /// Create a new MavlinkLink Object
@@ -85,7 +91,7 @@ namespace MavLink
                // Hunt for the start char
                int huntStartPos = (int)i;
 
-               while (i < bytesToProcess.Length && bytesToProcess[i] != MavlinkSettings.ProtocolMarker)
+               while (i < bytesToProcess.Length && !(bytesToProcess[i] == MavlinkSettings.ProtocolMarker || bytesToProcess[i] == 0xFE))
                    i++;
 
                if (i == bytesToProcess.Length)
@@ -120,115 +126,263 @@ namespace MavLink
                    return;
                }
 
-               /*
-                * Byte order:
-                * 
-                * 0  Packet start sign	
-                * 1	 Payload length	 0 - 255
-                * 2	 Packet sequence	 0 - 255
-                * 3	 System ID	 1 - 255
-                * 4	 Component ID	 0 - 255
-                * 5	 Message ID	 0 - 255
-                * 6 to (n+6)	 Data	 (0 - 255) bytes
-                * (n+7) to (n+8)	 Checksum (high byte, low byte) for v0.9, lowbyte, highbyte for 1.0
-                *
-                */
-               UInt16 payLoadLength = bytesToProcess[i + 1];
+                byte magicByte = bytesToProcess[i+0];
+                if( magicByte == 0xFE )
+                {
+                    // MAVLink v1.0
+                    ParseBytesV1(ref bytesToProcess, ref i, ref j);
+                    return;
+                }
+                if( magicByte == 0xFD)
+                {
+                    // MAVLink v2.0
+                    ParseBytesV2(ref bytesToProcess, ref i, ref j);
+                    return;
+                }
 
-               // Now we know the packet length, 
-               // If we don't have enough bytes in this packet to satisfy that packet lenghth,
-               // then dump the whole lot in the leftovers and do nothing else - go round again
-               if (payLoadLength > (bytesToProcess.Length - i - 8)) // payload + 'overhead' bytes (crc, system etc)
-               {
-                   // back up to the start char for next cycle
-                   j = 0;
-
-                   leftovers = new byte[bytesToProcess.Length - i];
-
-                   for (; i < bytesToProcess.Length; i++)
-                   {
-                       leftovers[j++] = bytesToProcess[i];
-                   }
-                   return;
-               }
-
-               i++;
-
-               // Check the CRC. Does not include the starting 'U' byte but does include the length
-               var crc1 = Mavlink_Crc.Calculate(bytesToProcess, (UInt16)(i), (UInt16)(payLoadLength + 5));
-
-               if (MavlinkSettings.CrcExtra)
-               {
-                   var possibleMsgId = bytesToProcess[i + 4];
-
-                   if (!MavLinkSerializer.Lookup.ContainsKey(possibleMsgId))
-                   {
-                       // we have received an unknown message. In this case we don't know the special
-                       // CRC extra, so we have no choice but to fail.
-
-                       // The way we do this is to just let the procedure continue
-                       // There will be a natural failure of the main packet CRC
-                   }
-                   else
-                   {
-                       var extra = MavLinkSerializer.Lookup[possibleMsgId];
-                       crc1 = Mavlink_Crc.CrcAccumulate(extra.CrcExtra, crc1);
-                   }
-               }
-
-               byte crcHigh = (byte)(crc1 & 0xFF);
-               byte crcLow = (byte)(crc1 >> 8);
-
-               byte messageCrcHigh = bytesToProcess[i +  5  + payLoadLength];
-               byte messageCrcLow = bytesToProcess[i + 6  + payLoadLength];
-
-               if (messageCrcHigh == crcHigh && messageCrcLow == crcLow)
-               {
-                   // This is used for data drop outs metrics, not packet windows
-                   // so we should consider this here. 
-                   // We pass up to subscribers only as an advisory thing
-                   var rxPacketSequence = bytesToProcess[++i];
-                   i++;
-                   var packet = new byte[payLoadLength + 3];  // +3 because we are going to send up the sys and comp id and msg type with the data
-
-                   for (j = 0; j < packet.Length; j++)
-                       packet[j] = bytesToProcess[i + j];
-
-                   var debugArray = new byte[payLoadLength + 7];
-                   Array.Copy(bytesToProcess, (int)(i - 3), debugArray, 0, debugArray.Length);
-
-                   //OnPacketDecoded(packet, rxPacketSequence, debugArray);
-
-                   ProcessPacketBytes(packet, rxPacketSequence);
-
-                   PacketsReceived++;
-
-                   // clear leftovers, just incase this is the last packet
-                   leftovers = new byte[] { };
-
-                   //  advance i here by j to avoid unecessary hunting
-                   // todo: could advance by j + 2 I think?
-                   i = i + (uint)(j + 2);
-               }
-               else
-               {
-                   var badBytes = new byte[i + 7 + payLoadLength];
-                   Array.Copy(bytesToProcess, (int)(i - 1), badBytes, 0, payLoadLength + 7);
-
-                   if (PacketFailedCRC != null)
-                   {
-                       PacketFailedCRC(this, new PacketCRCFailEventArgs(badBytes, (int)(bytesToProcess.Length - i - 1)));
-                   }
-
-                   BadCrcPacketsReceived++;
-               }
+                throw new NotSupportedException("Protocol version not supported");
+               
            }
        }  
 
-       public byte[] Send(MavlinkPacket mavlinkPacket)
+        private void ParseBytesV1(ref byte[] bytesToProcess, ref uint i, ref int j)
+        {
+            /*
+            * Byte order:
+            * 
+            * 0  Packet start sign	
+            * 1	 Payload length	 0 - 255
+            * 2	 Packet sequence	 0 - 255
+            * 3	 System ID	 1 - 255
+            * 4	 Component ID	 0 - 255
+            * 5	 Message ID	 0 - 255
+            * 6 to (n+6)	 Data	 (0 - 255) bytes
+            * (n+7) to (n+8)	 Checksum (high byte, low byte) for v0.9, lowbyte, highbyte for 1.0
+            *
+            */
+            UInt16 payLoadLength = bytesToProcess[i + 1];
+
+            // Now we know the packet length, 
+            // If we don't have enough bytes in this packet to satisfy that packet lenghth,
+            // then dump the whole lot in the leftovers and do nothing else - go round again
+            if (payLoadLength > (bytesToProcess.Length - i - 8)) // payload + 'overhead' bytes (crc, system etc)
+            {
+                // back up to the start char for next cycle
+                j = 0;
+
+                leftovers = new byte[bytesToProcess.Length - i];
+
+                for (; i < bytesToProcess.Length; i++)
+                {
+                    leftovers[j++] = bytesToProcess[i];
+                }
+                return;
+            }
+
+            i++;
+
+            // Check the CRC. Does not include the starting 'U' byte but does include the length
+            var crc1 = Mavlink_Crc.Calculate(bytesToProcess, (UInt16)(i), (UInt16)(payLoadLength + 5));
+
+            if (MavlinkSettings.CrcExtra)
+            {
+                var possibleMsgId = bytesToProcess[i + 4];
+
+                if (!MavLinkSerializer.Lookup.ContainsKey(possibleMsgId))
+                {
+                    // we have received an unknown message. In this case we don't know the special
+                    // CRC extra, so we have no choice but to fail.
+
+                    // The way we do this is to just let the procedure continue
+                    // There will be a natural failure of the main packet CRC
+                }
+                else
+                {
+                    var extra = MavLinkSerializer.Lookup[possibleMsgId];
+                    crc1 = Mavlink_Crc.CrcAccumulate(extra.CrcExtra, crc1);
+                }
+            }
+
+            byte crcHigh = (byte)(crc1 & 0xFF);
+            byte crcLow = (byte)(crc1 >> 8);
+
+            byte messageCrcHigh = bytesToProcess[i + 5 + payLoadLength];
+            byte messageCrcLow = bytesToProcess[i + 6 + payLoadLength];
+
+            if (messageCrcHigh == crcHigh && messageCrcLow == crcLow)
+            {
+                // This is used for data drop outs metrics, not packet windows
+                // so we should consider this here. 
+                // We pass up to subscribers only as an advisory thing
+                var rxPacketSequence = bytesToProcess[++i];
+                i++;
+                var packet = new byte[payLoadLength + 3];  // +3 because we are going to send up the sys and comp id and msg type with the data
+
+                for (j = 0; j < packet.Length; j++)
+                    packet[j] = bytesToProcess[i + j];
+
+                var debugArray = new byte[payLoadLength + 7];
+                Array.Copy(bytesToProcess, (int)(i - 3), debugArray, 0, debugArray.Length);
+
+                //OnPacketDecoded(packet, rxPacketSequence, debugArray);
+
+                ProcessPacketBytes(packet, rxPacketSequence);
+
+                PacketsReceived++;
+
+                // clear leftovers, just incase this is the last packet
+                leftovers = new byte[] { };
+
+                //  advance i here by j to avoid unecessary hunting
+                // todo: could advance by j + 2 I think?
+                i = i + (uint)(j + 2);
+            }
+            else
+            {
+                var badBytes = new byte[i + 7 + payLoadLength];
+                Array.Copy(bytesToProcess, (int)(i - 1), badBytes, 0, payLoadLength + 7);
+
+                if (PacketFailedCRC != null)
+                {
+                    PacketFailedCRC(this, new PacketCRCFailEventArgs(badBytes, (int)(bytesToProcess.Length - i - 1)));
+                }
+
+                BadCrcPacketsReceived++;
+            }
+        }
+
+        private void ParseBytesV2(ref byte[] bytesToProcess, ref uint i, ref int j)
+        {
+            /*
+            * Byte order:
+            * 
+            * 0                Packet start sign	
+            * 1                Payload length	 0 - 255
+            * 2                Incompatability flags
+            * 3                Compatability flags
+            * 4                Packet sequence	 0 - 255
+            * 5                System ID	 1 - 255
+            * 6                Component ID	 0 - 255
+            * 7 to 9           Message ID	 0 - 16777215
+            * 10 to (n+10)     Data	 (0 - 255) bytes
+            * (n+10) to (n+11) Checksum (high byte, low byte) for v0.9, lowbyte, highbyte for 1.0
+            * (n+12) to (n+25) Signature if signed
+            *
+            */
+            UInt16 payLoadLength = bytesToProcess[i + 1];
+
+            byte incompatabilityFlags = bytesToProcess[i + 2];
+            if( (incompatabilityFlags & 0x01) == 0x01 )
+            {
+                // Message is signed, unsupported
+                // If support is added, will need to adjust overhead
+                //throw new NotSupportedException("MAVLink v2 message signing not supported");
+                return;
+            }
+
+            // Now we know the packet length, 
+            // If we don't have enough bytes in this packet to satisfy that packet length,
+            // then dump the whole lot in the leftovers and do nothing else - go round again
+            if (payLoadLength > (bytesToProcess.Length - i - 12)) // payload + 'overhead' bytes (crc, system etc)
+            {
+                // back up to the start char for next cycle
+                j = 0;
+
+                leftovers = new byte[bytesToProcess.Length - i];
+
+                for (; i < bytesToProcess.Length; i++)
+                {
+                    leftovers[j++] = bytesToProcess[i];
+                }
+                return;
+            }
+
+            i++;
+
+            // Check the CRC. Does not include the starting 'U' byte but does include the length
+            var crc1 = Mavlink_Crc.Calculate(bytesToProcess, (UInt16)(i), (UInt16)(payLoadLength + 9));
+
+            if (MavlinkSettings.CrcExtra)
+            {
+                var possibleMsgId = bitconverter.ToUInt32(bytesToProcess,(int)(i + 6)) & 0x00FFFFFF;
+
+                if (!MavLinkSerializer.Lookup.ContainsKey((int)possibleMsgId))
+                {
+                    // we have received an unknown message. In this case we don't know the special
+                    // CRC extra, so we have no choice but to fail.
+
+                    // The way we do this is to just let the procedure continue
+                    // There will be a natural failure of the main packet CRC
+                }
+                else
+                {
+                    var extra = MavLinkSerializer.Lookup[(int)possibleMsgId];
+                    crc1 = Mavlink_Crc.CrcAccumulate(extra.CrcExtra, crc1);
+                }
+            }
+
+            byte crcLow = (byte)(crc1 & 0xFF);
+            byte crcHigh = (byte)(crc1 >> 8);
+
+            byte messageCrcHigh = bytesToProcess[i + 9 + payLoadLength + 1];
+            byte messageCrcLow = bytesToProcess[i + 9 + payLoadLength + 0];
+
+            if (messageCrcHigh == crcHigh && messageCrcLow == crcLow)
+            {
+                // This is used for data drop outs metrics, not packet windows
+                // so we should consider this here. 
+                // We pass up to subscribers only as an advisory thing
+                var rxPacketSequence = bytesToProcess[i+3];
+                i+=4; // Move to SYSID
+                var packet = new byte[payLoadLength + 5];  // +5 because we are going to send up the sys and comp id and msg type with the data
+
+                for (j = 0; j < packet.Length; j++)
+                    packet[j] = bytesToProcess[i + j];
+
+                var debugArray = new byte[payLoadLength + 7];
+                Array.Copy(bytesToProcess, (int)(i - 3), debugArray, 0, debugArray.Length);
+
+                //OnPacketDecoded(packet, rxPacketSequence, debugArray);
+
+                ProcessPacketBytes(packet, rxPacketSequence);
+
+                PacketsReceived++;
+
+                // clear leftovers, just incase this is the last packet
+                leftovers = new byte[] { };
+
+                //  advance i here by j to avoid unecessary hunting
+                // todo: could advance by j + 2 I think?
+                i = i + (uint)(j + 2);
+            }
+            else
+            {
+                var badBytes = new byte[i + 7 + payLoadLength];
+                Array.Copy(bytesToProcess, (int)(i - 1), badBytes, 0, payLoadLength + 7);
+
+                if (PacketFailedCRC != null)
+                {
+                    PacketFailedCRC(this, new PacketCRCFailEventArgs(badBytes, (int)(bytesToProcess.Length - i - 1)));
+                }
+
+                BadCrcPacketsReceived++;
+            }
+
+        }
+
+        public byte[] Send(MavlinkPacket mavlinkPacket)
        {
-           var bytes = this.Serialize(mavlinkPacket.Message, mavlinkPacket.SystemId, mavlinkPacket.ComponentId);
-           return SendPacketLinkLayer(bytes);
+
+            if (MavlinkSettings.WireProtocolVersion == "2.0")
+            {
+                var bytes = this.SerializeV2(mavlinkPacket.Message, mavlinkPacket.SystemId, mavlinkPacket.ComponentId);
+                return SendPacketLinkLayerV2(bytes);
+            }
+            else
+            {
+                var bytes = this.Serialize(mavlinkPacket.Message, mavlinkPacket.SystemId, mavlinkPacket.ComponentId);
+                return SendPacketLinkLayer(bytes);
+            }
        }
 
         // Send a raw message over the link - 
@@ -251,7 +405,7 @@ namespace MavLink
             var outBytes = new byte[packetData.Length + 5];
 
             outBytes[0] = MavlinkSettings.ProtocolMarker;
-            outBytes[1] = (byte)(packetData.Length-3);  // 3 bytes for sequence, id, msg type which this 
+            outBytes[1] = (byte)(packetData.Length-3);  // 3 bytes for sysid, compid, msg type which this 
                                                         // layer does not concern itself with
             outBytes[2] = unchecked(txPacketSequence++);
 
@@ -281,6 +435,57 @@ namespace MavLink
             return outBytes;
         }
 
+        private byte[] SendPacketLinkLayerV2(byte[] packetData)
+        {
+            /*
+               * Byte order:
+               * 
+               * 0   Packet start sign	 
+               * 1	 Payload length	 0 - 255
+               * 2   Inc Flags
+               * 3   Cmp Flags
+               * 4	 Packet sequence	 0 - 255
+               * 5	 System ID	 1 - 255
+               * 6	 Component ID	 0 - 255
+               * 7 to 9	 Message ID	 0 - 16777215
+               * 10 to (n+10)	 Data	 (0 - 255) bytes
+               * (n+11) to (n+12)	 Checksum (high byte, low byte)
+               *
+               */
+            var outBytes = new byte[packetData.Length + 7];
+
+            outBytes[0] = MavlinkSettings.ProtocolMarker;
+            outBytes[1] = (byte)(packetData.Length - 5);  // 5 bytes for sysid, compid, msg type which this 
+                                                          // layer does not concern itself with
+            outBytes[2] = 0x00; // Inc Flags
+            outBytes[3] = 0x00; // Cmp Flags
+            outBytes[4] = unchecked(txPacketSequence++);
+
+            int i;
+
+            for (i = 0; i < packetData.Length; i++)
+            {
+                outBytes[i + 5] = packetData[i];
+            }
+
+            // Check the CRC. Does not include the starting byte but does include the length
+            var crc1 = Mavlink_Crc.Calculate(outBytes, 1, (UInt16)(packetData.Length + 4));
+
+            if (MavlinkSettings.CrcExtra)
+            {
+                var possibleMsgId = outBytes[5];
+                var extra = MavLinkSerializer.Lookup[possibleMsgId];
+                crc1 = Mavlink_Crc.CrcAccumulate(extra.CrcExtra, crc1);
+            }
+
+            byte crc_high = (byte)(crc1 & 0xFF);
+            byte crc_low = (byte)(crc1 >> 8);
+
+            outBytes[i + 5] = crc_high;
+            outBytes[i + 6] = crc_low;
+
+            return outBytes;
+        }
 
         // Process a raw packet in it's entirety in the given byte array
         // if deserialization is successful, then the packetdecoded event will be raised
@@ -306,6 +511,33 @@ namespace MavLink
             // else do what?
         }
 
+        private void ProcessPacketBytesV2(byte[] packetBytes, byte rxPacketSequence)
+        {
+            //	 0 System ID	 1 - 255
+            //	 1 Component ID	 0 - 255
+            //	 2 to 4 Message ID	 0 - 16777215
+            //   6 to (n+5)	 Data	 (0 - 255) bytes
+            var packet = new MavlinkPacket
+            {
+                SystemId = packetBytes[0],
+                ComponentId = packetBytes[1],
+                SequenceNumber = rxPacketSequence,
+                Message = this.DeserializeV2(packetBytes, 2)
+            };
+
+            if (PacketReceived != null)
+            {
+                PacketReceived(this, packet);
+            }
+
+        }
+
+        public MavlinkMessage DeserializeV2(byte[] bytes, int offset)
+        {
+            var msgId = bitconverter.ToUInt32(bytes, offset) & 0x00FFFFFF;
+            var messageGen = MavLinkSerializer.Lookup[(int)msgId].Deserializer;
+            return messageGen.Invoke(bytes, offset + 3);
+        }
 
         public MavlinkMessage Deserialize(byte[] bytes, int offset)
         {
@@ -330,6 +562,30 @@ namespace MavLink
 
             var resultBytes = new byte[endPos];
             Array.Copy(buff, resultBytes, endPos);
+
+            return resultBytes;
+        }
+
+        public byte[] SerializeV2(MavlinkMessage message, int systemId, int componentId)
+        {
+            var buff = new byte[256];
+
+            buff[0] = (byte)systemId;
+            buff[1] = (byte)componentId;
+
+            var endPos = 5;
+
+            var msgId = message.Serialize(buff, ref endPos);
+
+            var msgIdBytes = new byte[4];
+            bitconverter.GetBytes(msgId,msgIdBytes,0);
+            Array.Copy(msgIdBytes, 0, buff, 2, 3);
+
+            // Perform MAVLink 2 truncation
+            int truncatedLength = Array.FindLastIndex(buff, item => item > 0) + 1;
+
+            var resultBytes = new byte[truncatedLength];
+            Array.Copy(buff, resultBytes, truncatedLength);
 
             return resultBytes;
         }
