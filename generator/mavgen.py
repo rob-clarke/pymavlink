@@ -266,6 +266,9 @@ def mavgen(opts, args):
     elif opts.language == 'javascript_nextgen':
         from . import mavgen_javascript
         mavgen_javascript.generate(opts.output, xml)
+    elif opts.language == 'javascript_es6':
+        from . import mavgen_es6
+        mavgen_es6.generate(opts.output, xml)
     elif opts.language == 'typescript':
         from . import mavgen_typescript
         mavgen_typescript.generate(opts.output, xml)
