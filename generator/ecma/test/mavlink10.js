@@ -13,10 +13,15 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
         return new Promise( (beforePromiseResolve) => {
             let mavlinkPromise = import('../implementations/mavlink_common_v1.0/mavlink.js');
             mavlinkPromise.then( (mavlink) => {
-                this.mavlink = mavlink;
+                if( typeof window === 'undefined') {
+                    global.mavlink = mavlink;
+                }
+                else {
+                    window.mavlink = mavlink;
+                }
                 
                 // MAV mock
-                this.m = new this.mavlink.MAVLink(null, 42, 99);
+                this.m = new mavlink.MAVLink(null, 42, 99);
 
                 // Valid heartbeat payload
                 this.heartbeatPayload = Uint8Array.from([0xfe, 0x09, 0x03, 0xff , 0x00 , 0x00 , 0x00 , 0x00 , 0x00 , 0x00 , 0x06 , 0x08 , 0x00 , 0x00 , 0x03, 0x9f, 0x5c]);
@@ -31,14 +36,14 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
     describe("message header handling", function() {
         
         it("IDs and sequence numbers are set on send", function(){
-            var mav = new this.mavlink.MAVLink(null, 42, 99);
+            var mav = new mavlink.MAVLink(null, 42, 99);
             var writer = {
                 write: function(){}
             };
             mav.file = writer;
             var spy = sinon.spy(writer, 'write');
 
-            var msg = new this.mavlink.messages.HEARTBEAT();
+            var msg = new mavlink.messages.HEARTBEAT();
             mav.send(msg);
 
             spy.calledOnce.should.be.true;
@@ -48,14 +53,14 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
         });
 
         it("sequence number increases on send", function(){
-            var mav = new this.mavlink.MAVLink(null, 42, 99);
+            var mav = new mavlink.MAVLink(null, 42, 99);
             var writer = {
                 write: function(){}
             };
             mav.file = writer;
             var spy = sinon.spy(writer, 'write');
 
-            var msg = new this.mavlink.messages.HEARTBEAT();
+            var msg = new mavlink.messages.HEARTBEAT();
             mav.send(msg);
             mav.send(msg);
 
@@ -69,14 +74,14 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
         });
 
         it("sequence number turns over at 256", function(){
-            var mav = new this.mavlink.MAVLink(null, 42, 99);
+            var mav = new mavlink.MAVLink(null, 42, 99);
             var writer = {
                 write: function(){}
             };
             mav.file = writer;
             var spy = sinon.spy(writer, 'write');
 
-            var msg = new this.mavlink.messages.HEARTBEAT();
+            var msg = new mavlink.messages.HEARTBEAT();
 
             for(var i = 0; i < 258; i++){
                 mav.send(msg);
@@ -117,13 +122,13 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
         it("returns a bad_data message if a borked message is encountered", function() {
             var b = Uint8Array.from([3, 0, 1, 2, 3, 4, 5]); // invalid message
             var message = this.m.parseChar(b);
-            message.should.be.an.instanceof(this.mavlink.messages.BAD_DATA);      
+            message.should.be.an.instanceof(mavlink.messages.BAD_DATA);      
         });
 
         it("emits a 'message' event, provisioning callbacks with the message", function(done) {
             this.m.addEventListener('message', (e) => {
                 let message = e.detail;
-                message.should.be.an.instanceof(this.mavlink.messages.HEARTBEAT);
+                message.should.be.an.instanceof(mavlink.messages.HEARTBEAT);
                 done();
             });
             this.m.parseChar(this.heartbeatPayload);
@@ -133,7 +138,7 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
             var b = Uint8Array.from([3, 0, 1, 2, 3, 4, 5]); // invalid message
             this.m.addEventListener('message', (e) => {
                 let message = e.detail;
-                message.should.be.an.instanceof(this.mavlink.messages.BAD_DATA);
+                message.should.be.an.instanceof(mavlink.messages.BAD_DATA);
                 done();
             });
             this.m.parseChar(b);
@@ -270,7 +275,7 @@ describe("Generated MAVLink 1.0 protocol handler object", function() {
             this.m.pushBuffer(this.heartbeatPayload);
             this.m.parseLength();
             var message = this.m.parsePayload();
-            message.should.be.an.instanceof(this.mavlink.messages.HEARTBEAT);
+            message.should.be.an.instanceof(mavlink.messages.HEARTBEAT);
         });
 
         it("increments the total packets received if a good packet is decoded", function() {
@@ -294,7 +299,7 @@ describe("MAVLink CRC-16/MCRF4XX Decoder", function() {
         return new Promise( (beforePromiseResolve) => {
             let mavlinkPromise = import('../implementations/mavlink_common_v1.0/mavlink.js');
             mavlinkPromise.then( (mavlink) => {
-                this.mavlink = mavlink;
+                mavlink = mavlink;
                 
                 // Message header + payload, lacks initial MAVLink flag (FE) and CRC.
                 this.heartbeatMessage = new Buffer.from([0x09, 0x03, 0xff , 0x00 , 0x00 , 0x00 , 0x00 , 0x00 , 0x00 , 0x06 , 0x08 , 0x00 , 0x00 , 0x03]);
@@ -307,13 +312,13 @@ describe("MAVLink CRC-16/MCRF4XX Decoder", function() {
     // This test matches the output directly taken by inspecting what the Python implementation
     // generated for the above packet.
     it('implements CRC-16/MCRF4XX function', function() {
-            this.mavlink.x25Crc(this.heartbeatMessage).should.equal(27276);
+            mavlink.x25Crc(this.heartbeatMessage).should.equal(27276);
     });
 
     // Heartbeat crc_extra value is 50.
     it('can accumulate further bytes as needed (crc_extra)', function() {
-            var crc = this.mavlink.x25Crc(this.heartbeatMessage);
-            crc = this.mavlink.x25Crc([50], crc);
+            var crc = mavlink.x25Crc(this.heartbeatMessage);
+            crc = mavlink.x25Crc([50], crc);
             crc.should.eql(23711)
     });
 
