@@ -175,7 +175,7 @@ describe('MAVLink 1.0 header', function() {
                     window.mavlink = mavlink;
                 }
                 
-                this.h = new mavlink._testing_fixtures.MAVLinkHeader(mavlink.MAVLINK_MSG_ID.MAVLINK_MSG_ID_PARAM_REQUEST_LIST, 1, 2, 3, 4);
+                this.h = new mavlink._testing_exports.MAVLinkHeader(mavlink.MAVLINK_MSG_ID.MAVLINK_MSG_ID_PARAM_REQUEST_LIST, 1, 2, 3, 4);
 
                 beforePromiseResolve();
             });

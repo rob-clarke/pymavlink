@@ -991,7 +991,7 @@ export class MAVLink extends EventTarget {
 def generate_footer(outf, xml):
     t.write(outf, """
 
-export const _testing_fixtures = {
+export const _testing_exports = {
     MAVLinkHeader: MAVLinkHeader
 };
 
