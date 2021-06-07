@@ -45,7 +45,7 @@ MAXIMUM_INCLUDE_FILE_NESTING = 5
 
 # List the supported languages. This is done globally because it's used by the GUI wrapper too
 # Right now, 'JavaScript' ~= 'JavaScript_Stable', in the future it may be made equivalent to 'JavaScript_NextGen'
-supportedLanguages = ["C", "CS", "JavaScript", "JavaScript_Stable","JavaScript_NextGen", "TypeScript", "Python", "Lua", "WLua", "ObjC", "Swift", "Java", "C++11"]
+supportedLanguages = ["C", "CS", "JavaScript", "JavaScript_Stable", "JavaScript_NextGen", "JavaScript_ECMA", "TypeScript", "Python", "Lua", "WLua", "ObjC", "Swift", "Java", "C++11"]
 
 
 def mavgen(opts, args):
@@ -266,9 +266,9 @@ def mavgen(opts, args):
     elif opts.language == 'javascript_nextgen':
         from . import mavgen_javascript
         mavgen_javascript.generate(opts.output, xml)
-    elif opts.language == 'javascript_es6':
-        from . import mavgen_es6
-        mavgen_es6.generate(opts.output, xml)
+    elif opts.language == 'javascript_ecma':
+        from . import mavgen_ecma
+        mavgen_ecma.generate(opts.output, xml)
     elif opts.language == 'typescript':
         from . import mavgen_typescript
         mavgen_typescript.generate(opts.output, xml)

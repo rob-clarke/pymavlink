@@ -1,0 +1,21 @@
+{
+  "name": "mavlink",
+  "version": "0.0.1",
+  "description": "Implementation of the MAVLink protocol for various platforms and both 1.0 and 2.0 revisions of MAVLink",
+  "repository": "private",
+  "dependencies": {
+    "jpstruct": "^0.0.2"
+  },
+  "devDependencies": {
+    "mocha": "",
+    "should": "",
+    "sinon": ""
+  },
+  "scripts": {
+    "preinstall": "rm -rf implementations",
+    "install": "cd .. && ./gen_js_ecma.sh",
+    "pretest": "cd ../.. && ./test_gen_ecma.sh && npm install",
+    "test": "cd test ; python3 make_tests.py > made_tests.js ; cd .. ; mocha test",
+    "lint": "./node_modules/.bin/eslint ./implementations/mavlink_common_v1.0/mavlink.js ./implementations/mavlink_common_v2.0/mavlink.js"
+  }
+}
