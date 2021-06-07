@@ -32,7 +32,7 @@ import sys
 # now tested and executes with this simple matrix of two mavtypes and two mav versions
 cmddir = '../../../generator/C/test/posix/'
 mavtypes = ['ardupilotmega','common']
-versions = ['1.0','2.0']
+versions = ['1.0','2.0']#['2.0']
 cmds = []
 
 #..so the C binding cmds executed/wrapped are: 'testmav1.0_ardupilotmega', 'testmav2.0_ardupilotmega', 'testmav1.0_common', 'testmav2.0_common'
@@ -59,42 +59,40 @@ signing_extra_template = '''
             return [someLong.getLowBitsUnsigned(), someLong.getHighBitsUnsigned()]; 
         } 
 
-        this.mav.signing.secret_key = new Buffer.from([ 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42 ]) ; // matches secret key in testmav.c
+        this.mav.signing.secret_key = Uint8Array.from([ 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42 ]) ; // matches secret key in testmav.c
         this.mav.signing.link_id = 0 ;    // 1 byte // matches link_id in testmav.c
-        //this.mav.signing.timestamp = new Buffer.from([ 0,0,0,0,0,${TS}]); // 6 bytes // matches timestamp in testmav.c
-        this.mav.signing.timestamp = ${TS};  // at most 48 bits , fits in a native js number  - matches timestamp in testmav.c
+        this.mav.signing.timestamp = ${TS}n;  // at most 48 bits , using a BigInt  - matches timestamp in testmav.c
         this.mav.signing.sign_outgoing = true; // todo false this
 
         var epoch_offset = 1420070400; 
-        var x= Long.fromString("${TS}", true); 
-        var long_timestamp = wrap_long(x); 
+        var long_timestamp = ${TS}n; 
 
         var target_system = 255;  // the python impl in mavproxy uses 255 here , so we do, it could be this.sysid 
         var target_component = 0; 
         var secret_key = this.mav.signing.secret_key ; 
 
-                    MAVLink20Processor.prototype.send = function(mavmsg) {
-                        buf = mavmsg.pack(this); 
-                        // no actual send here
-                        this.seq = (this.seq + 1) % 256; 
-                        this.total_packets_sent +=1; 
-                        this.total_bytes_sent += buf.length; 
-                    } 
+        this.mav.send = function(mavmsg) {
+            buf = mavmsg.pack(this); 
+            // no actual send here
+            this.seq = (this.seq + 1) % 256; 
+            this.total_packets_sent +=1; 
+            this.total_bytes_sent += buf.length; 
+        } 
 
         var link_id =0; 
         var srcSystem=this.mav.srcSystem; 
         var srcComponent=this.mav.srcComponent; 
         stream_key = new Array(link_id,srcSystem,srcComponent).toString(); 
         this.mav.signing.stream_timestamps[stream_key] = ${TS}; 
-        this.mav.signing.timestamp.should.eql(${TS}); //ts before setup
+        this.mav.signing.timestamp.should.eql(${TS}n); //ts before setup
 
-        var setup_signing = new mavlink20.messages.setup_signing(target_system, target_component, secret_key, long_timestamp); 
+        var setup_signing = new this.mavlink.messages.SETUP_SIGNING(target_system, target_component, secret_key, long_timestamp); 
         this.mav.send(setup_signing,this.sysid); 
 
-        setup_signing.secret_key.should.eql(new Buffer.from([ 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42 ]) ); 
-        setup_signing.initial_timestamp.should.eql([${TS},0]); 
+        setup_signing.secret_key.should.eql(Uint8Array.from([ 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42 ]) ); 
+        setup_signing.initial_timestamp.should.eql(${TS}n); 
         //this.mav.signing.timestamp.should.eql(new Buffer.from([0,0,0,0,0,${TS}])); 
-        this.mav.signing.timestamp.should.eql(${TS}+1); // ts after setup 
+        this.mav.signing.timestamp.should.eql(${TS}n+1n); // ts after setup 
         this.mav.signing.link_id.should.eql(0); 
         this.mav.signing.sign_outgoing.should.eql(true);
 
@@ -110,9 +108,9 @@ template2 = '''
 //--- 
 
         // Create a buffer that matches what the Python version of MAVLink creates
-        var reference = new Buffer.from([${BUFFER}]);
+        var reference = Uint8Array.from([${BUFFER}]);
 
-        this.mav.signing.timestamp = ${TS};// force ts to be correct, right before the pack() that matters
+        this.mav.signing.timestamp = ${TS}n;// force ts to be correct, right before the pack() that matters
 
         var p = test_${NAME}.pack(this.mav);
 
@@ -130,7 +128,7 @@ template2 = '''
         
         test_${NAME}._header.compat_flags.should.eql(0); 
 
-        new Buffer.from(p).should.eql(reference);
+        Uint8Array.from(p).should.eql(reference);
     });
 '''
 
@@ -146,7 +144,6 @@ templatestart = '''
 // or see make_tests.py which created this.
 //
 should = require('should');
-var Long = require('long');
 
 '''
 
@@ -156,12 +153,20 @@ templateheader = '''
 describe('end-to-end node byte-level tests of ${MAVTYPE}/${VERSION} against C impl', function() {
 
     beforeEach(function() {
+        return new Promise((beforePromiseResolve) => {
+            let modulePromise = import('../implementations/mavlink_${MAVTYPE}_v${VERSION}/mavlink.js');// hardcoded here by make_tests.py generator
+            let testsPromise = import('../implementations/mavlink_${MAVTYPE}_v${VERSION}/mavlink.tests.js');//// hardcoded here by make_tests.py generator
+            Promise.all([modulePromise,testsPromise]).then( (values) => {
+                this.mavlink = values[0];
+                this.mav = new this.mavlink.MAVLink(null,42,150);
+                this.tests = values[1];
 
-        var {mavlink${VERS}, MAVLink${VERS}Processor} = require('../implementations/mavlink_${MAVTYPE}_v${VERSION}/mavlink.js');// hardcoded here by make_tests.py generator
-        this.mav = new MAVLink${VERS}Processor(null, 42, 150);  // hardcoded here by make_tests.py generator
-        this.tests = require('../implementations/mavlink_${MAVTYPE}_v${VERSION}/mavlink.tests.js');//// hardcoded here by make_tests.py generator
-        // be sure the test library is using the right version before we call into it
-        this.tests.set_mav(this.mav);
+                // be sure the test library is using the right version before we call into it
+                this.tests.set_mav(this.mav);
+
+                beforePromiseResolve();
+                });
+            });
     });'''
 
 templatefooter = '''

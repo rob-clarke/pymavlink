@@ -103,9 +103,9 @@ node generator/ecma/implementations/mavlink_common_v1.0/mavlink.tests.js > $OUT1
 printf "${RED}Streaming C test data into ECMAScript for pushBuffer/parseBuffer tests${NC}\n\n"
 sleep 1
 pushd generator/C/test/posix  > $OUT2
-#./testmav1.0_ardupilotmega | grep '^fe' | node ../../../ecma/test/testparser.js ardupilotmega 1.0 $VERBOSITY 
-#./testmav2.0_ardupilotmega | grep '^fd' | node ../../../ecma/test/testparser.js ardupilotmega 2.0 $VERBOSITY 
-#./testmav1.0_common | grep '^fe' | node ../../../ecma/test/testparser.js common 1.0 $VERBOSITY
+./testmav1.0_ardupilotmega | grep '^fe' | node ../../../ecma/test/testparser.js ardupilotmega 1.0 $VERBOSITY 
+./testmav2.0_ardupilotmega | grep '^fd' | node ../../../ecma/test/testparser.js ardupilotmega 2.0 $VERBOSITY 
+./testmav1.0_common | grep '^fe' | node ../../../ecma/test/testparser.js common 1.0 $VERBOSITY
 ./testmav2.0_common | grep '^fd' | node ../../../ecma/test/testparser.js common 2.0 $VERBOSITY
 popd  > $OUT2
 
@@ -117,7 +117,7 @@ printf "\n${RED}Running automated ECMAScript NPM test suite...${NC}\n\n"
 sleep 1
 cd generator/ecma
 
-npm test  2>/dev/null > $OUT0
+npm test #2>/dev/null
 cd ../..
 
 

@@ -78,7 +78,6 @@ mavlinkImport.then((mavlink) => {
 
         //    this._id = ${MAVHEAD}.MAVLINK_MSG_ID_BAD_DATA;
         if (message._id != -1) { // bad data has this set to -1
-            console.log(message);
             //console.log("test parsed packet type:"+message._name+" ... "+JSON.stringify(message));
 
             //console.log("test parsed packet type:"+message._name);

@@ -36,6 +36,8 @@ Note: this file has been auto-generated. DO NOT EDIT
 
 import * as jpstruct from 'jpstruct';
 
+import { createHash } from 'crypto';
+
 if( typeof CustomEvent === 'undefined' ) {
     global.CustomEvent = class extends Event {
         constructor(type, options) {
@@ -107,7 +109,7 @@ class MAVLinkHeader {
     if (xml.protocol_marker == 253):
         t.write(outf, """
     pack() {
-        return jpstruct.pack('BBBBBBBHB', ${PROTOCOL_MARKER}, this.mlen, this.incompat_flags, this.compat_flags, this.seq, this.srcSystem, this.srcComponent, ((this.msgId & 0xFF) << 8) | ((this.msgId >> 8) & 0xFF), this.msgId>>16);
+        return jpstruct.pack('<BBBBBBBHB', ${PROTOCOL_MARKER}, this.mlen, this.incompat_flags, this.compat_flags, this.seq, this.srcSystem, this.srcComponent, this.msgId & 0xffff, this.msgId>>16);
     }
         """, {'PROTOCOL_MARKER' : xml.protocol_marker,
               'MAVHEAD': get_mavhead(xml)})
@@ -116,7 +118,7 @@ class MAVLinkHeader {
         t.write(outf, """
 
     pack() {
-        return jpstruct.pack('BBBBBB', ${PROTOCOL_MARKER}, this.mlen, this.seq, this.srcSystem, this.srcComponent, this.msgId);
+        return jpstruct.pack('<BBBBBB', ${PROTOCOL_MARKER}, this.mlen, this.seq, this.srcSystem, this.srcComponent, this.msgId);
     }
         """, {'PROTOCOL_MARKER' : xml.protocol_marker,
               'MAVHEAD': get_mavhead(xml)})
@@ -147,32 +149,24 @@ export class MAVLinkMessage {
 
     // trying to be the same-ish as the python function of the same name
     sign_packet(mav) {
-        var crypto= require('crypto');
-        var h =  crypto.createHash('sha256');
+        var h =  createHash('sha256');
 
         //mav.signing.timestamp is a 48bit number, or 6 bytes.
 
-        // due to js not being able to shift numbers  more than 32, we'll use this instead.. 
-        // js stores all its numbers as a 64bit float with 53 bits of mantissa, so have room for 48 ok. 
-        // positive shifts left, negative shifts right
-        function shift(number, shift) { 
-            return number * Math.pow(2, shift); 
-        } 
-
-        var thigh = shift(mav.signing.timestamp,-32) // 2 bytes from the top, shifted right by 32 bits
-        var tlow  = (mav.signing.timestamp & 0xfffffff )  // 4 bytes from the bottom
+        var thigh = Number(mav.signing.timestamp >> 32n); // 2 bytes from the top, shifted right by 32 bits
+        var tlow  = Number(mav.signing.timestamp & 0xfffffffn);  // 4 bytes from the bottom
 
         // I means unsigned 4bytes, H means unsigned 2 bytes
         // first add the linkid(1 byte) and timestamp(6 bytes) that start the signature
-        this._msgbuf = this._msgbuf.concat(jpstruct.pack('<BIH', [mav.signing.link_id, tlow, thigh  ] ) );
+        this._msgbuf = [...this._msgbuf, ...(jpstruct.pack('<BIH', mav.signing.link_id, tlow, thigh) )];
     
         h.update(mav.signing.secret_key); // secret is already a Buffer
         h.update(new Buffer.from(this._msgbuf));
         var hashDigest = h.digest();
-        sig = hashDigest.slice(0,6)
-        this._msgbuf  = this._msgbuf.concat( ... sig ); 
+        let sig = hashDigest.slice(0,6)
+        this._msgbuf  = [...this._msgbuf, ...sig]; 
 
-        mav.signing.timestamp += 1
+        mav.signing.timestamp += 1n;
     } 
 
 
@@ -204,11 +198,11 @@ export class MAVLinkMessage {
         // header 
         this._header = new MAVLinkHeader(this._id, this._payload.length, mav.seq, mav.srcSystem, mav.srcComponent, incompat_flags, 0,);
         // payload     
-        this._msgbuf = this._header.pack().concat(this._payload);
+        this._msgbuf = new Uint8Array([...this._header.pack(), ...this._payload ]);
         // crc -  for now, assume always using crc_extra = True.  TODO: check/fix this. 
         var crc = x25Crc(this._msgbuf.slice(1));
         crc = x25Crc([crc_extra], crc);
-        this._msgbuf = this._msgbuf.concat(jpstruct.pack('<H', [crc] ) );
+        this._msgbuf = new Uint8Array([ ...this._msgbuf, ...(jpstruct.pack('<H', crc )) ] );
 
         // signing 
         this._signed     = false 
@@ -335,13 +329,25 @@ def generate_classes(outf, msgs, xml):
         outf.write("\n        }\n\n")
 
         # Implement the pack() function for this message
-        orderedfields =  "const orderedfields = [ this." + ", this.".join(m.ordered_fieldnames) + "];";
+        orderedfields =  "const orderedfields = [ this." + ", this.".join(m.ordered_fieldnames) + " ];"
         t.write(outf, """
         pack(mav) {
             ${MORDERED}
-            const j = jpstruct.pack(this._format, ...orderedfields);
+            let expanded_fields = [];
+            orderedfields.forEach( (elem,index) => {
+                if( this.array_len_map[index] != 0 && this.array_len_map[index] == this.len_map[index] ) {
+                    // This field needs to be spread
+                    // TODO: Bake this into the generator
+                    expanded_fields = [...expanded_fields, ...elem];
+                    }
+                else {
+                    expanded_fields.push(elem);
+                }
+            });
+            //console.log([...expanded_fields]);//TODO
+            const j = jpstruct.pack(this._format, ...expanded_fields);
             if (j === false ) throw new Error("jpstruct unable to handle this packet");
-            return message.prototype.pack.call(this, mav, this.crc_extra, j );
+            return super.pack(mav, this.crc_extra, j);
         }\n\n""", {'MORDERED': orderedfields, 'MAVHEAD': get_mavhead(xml), 'MNAME': m.name.lower()})
 
         outf.write("\n    },\n\n")
@@ -379,7 +385,7 @@ def mavfmt(field):
         }
 
     if field.array_length:
-        if field.type in ['char', 'int8_t', 'uint8_t']:
+        if field.type == 'char':
             return str(field.array_length)+'s'
         return str(field.array_length)+map[field.type]
     return map[field.type]
@@ -388,7 +394,7 @@ def generate_mavlink_class(outf, msgs, xml):
     print("Generating MAVLink class")
 
     # Write map to enable decoding based on the integer message type
-    t.write(outf, "\n\nconst mavlink_map = {\n", {'MAVHEAD': get_mavhead(xml)});
+    t.write(outf, "\n\nconst mavlink_map = {\n", {'MAVHEAD': get_mavhead(xml)})
     for m in msgs:
         outf.write("        %s: { format: '%s', type: messages.%s, order_map: %s, crc_extra: %u },\n" % (
             m.id, m.fmtstr, m.name, m.order_map, m.crc_extra))
@@ -468,7 +474,6 @@ export class MAVLink extends EventTarget {
     // If the logger exists, this function will add a message to it.
     // Assumes the logger is a winston object.
     log(level,message) {
-        console.log(message);
         if(this.logger) {
             this.logger.info(message);
         }
@@ -545,7 +550,6 @@ export class MAVLink extends EventTarget {
             m = this.parsePayload();
 
         } catch(e) {
-
             this.log('error', e.message);
             this.total_receive_errors += 1;
             m = new messages.BAD_DATA(this.bufInError, e.message);
@@ -728,9 +732,7 @@ export class MAVLink extends EventTarget {
             seq = unpacked[4];
             srcSystem = unpacked[5];
             srcComponent = unpacked[6];
-            var msgIDlow = ((unpacked[7] & 0xFF) << 8) | ((unpacked[7] >> 8) & 0xFF); // first-two msgid bytes 
-            var msgIDhigh = unpacked[8];   // the 3rd msgid byte 
-            msgId = msgIDlow | (msgIDhigh<<16);  // combined result. 0 - 16777215  24bit number 
+            msgId = unpacked[7] | (unpacked[8] << 16);
         """, {'MAVHEAD': get_mavhead(xml)})
     # Mavlink1
     else:
@@ -843,7 +845,9 @@ export class MAVLink extends EventTarget {
         var messageChecksum2 = x25Crc([decoder.crc_extra], messageChecksum); 
     
         if ( receivedChecksum != messageChecksum2 ) { 
-            throw new Error('invalid MAVLink CRC in msgID ' +msgId+ ', got 0x' + receivedChecksum + ' checksum, calculated payload checkum as 0x'+messageChecksum2 ); 
+            console.log("messageChecksum:" + messageChecksum.toString(16));
+            console.log("messageChecksum2:" + messageChecksum2.toString(16));
+            throw new Error('invalid MAVLink CRC in msgID ' +msgId+ ', got 0x' + receivedChecksum.toString(16) + ' checksum, calculated payload checksum as 0x'+messageChecksum2.toString(16) ); 
         }
     
         // now check the signature... 
@@ -883,7 +887,7 @@ export class MAVLink extends EventTarget {
         } 
 
         // now look at the specifics of the payload... 
-        var paylen = (new jpstruct.Struct(decoder.format)).length;
+        var paylen = jpstruct.calcsize(decoder.format);
 
     """, {'MAVPROCESSOR': get_mavprocessor(xml),
           'MAVHEAD': get_mavhead(xml)})
@@ -903,13 +907,13 @@ export class MAVLink extends EventTarget {
             var t = jpstruct.unpack(decoder.format, payloadBuf); 
         }
         catch (e) {
-            throw new Error('Unable to unpack MAVLink payload type='+decoder.type+' format='+decoder.format+' payloadLength='+ payloadBuf +': '+ e.message); 
+            throw new Error('Unable to unpack MAVLink payload type='+(new decoder.type())._name+' format='+decoder.format+'paylen='+paylen+' payloadLength='+ payloadBuf.length +': '+ e.message); 
         }
 
         // Need to check if the message contains arrays
         var args = {};
         const elementsInMsg = decoder.order_map.length;
-        const actualElementsInMsg = JSON.parse(JSON.stringify(t)).length;
+        const actualElementsInMsg = t.length;
 
         if (elementsInMsg == actualElementsInMsg) {
             // Reorder the fields to match the order map
@@ -971,7 +975,7 @@ export class MAVLink extends EventTarget {
             m.set(args,false); // associate ordered-field-numbers to names, after construction not during.
         }
         catch (e) {
-            throw new Error('Unable to instantiate MAVLink message of type '+decoder.type+' : ' + e.message);
+            throw new Error('Unable to instantiate MAVLink message of type '+(new decoder.type)._name+' : ' + e.message);
         }
 
         m._signed = sig_ok; 
@@ -981,7 +985,7 @@ export class MAVLink extends EventTarget {
         m._payload = payloadBuf 
         m.crc = receivedChecksum;
         m._header = new MAVLinkHeader(msgId, mlen, seq, srcSystem, srcComponent, incompat_flags, compat_flags);
-        this.log(m);
+        this.log('debug',m);
         return m;
     }
 };
@@ -1045,12 +1049,12 @@ def generate_tests_mavlink_class(outf, msgs, xml):
 
     for m in msgs:
 
-        outf.write("function test_%s() {\n"% (  m.name.lower()));
+        outf.write("export function test_%s() {\n"% (  m.name.lower()));
 
         #var bs = new mavlink20.messages.battery_status(
         outf.write("    if ( verbose == 2 ) console.log('test creating and packing:%s'); \n" % (  m.name.lower() ) )
         outf.write("    if ( verbose == 1) { process.stdout.write('test creating and packing:"+m.name.lower()+"          \\r'); }\n")
-        outf.write("    let test_%s = new mavlink.messages.%s(); \n\n" % (  m.name.lower(), m.name.lower()))
+        outf.write("    let test_%s = new mavlink.messages.%s(); \n\n" % (  m.name.lower(), m.name))
  
         idx = 0; # test data is in same order as ordered_fieldnames
         for f in m.ordered_fieldnames:

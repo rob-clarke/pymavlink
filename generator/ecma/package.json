@@ -4,7 +4,7 @@
   "description": "Implementation of the MAVLink protocol for various platforms and both 1.0 and 2.0 revisions of MAVLink",
   "repository": "private",
   "dependencies": {
-    "jpstruct": "^0.0.2"
+    "jpstruct": ">=0.0.3"
   },
   "devDependencies": {
     "mocha": "",
