@@ -50,7 +50,7 @@ if( typeof CustomEvent === 'undefined' ) {
 }
 
 // Implement the CRC-16/MCRF4XX function (present in the Python version through the mavutil.py package)
-function x25Crc(buffer, crcIN) {
+export function x25Crc(buffer, crcIN) {
 
     var bytes = buffer;
     var crcOUT = crcIN || 0xffff;
@@ -679,8 +679,7 @@ export class MAVLink extends EventTarget {
          //   h = hashlib.new('sha256') 
          //   h.update(this.signing.secret_key) 
          //   h.update(msgbuf[:-6]) 
-        var crypto= require('crypto'); 
-        var h =  crypto.createHash('sha256'); 
+        var h =  createHash('sha256'); 
  
         // just the last 6 of 13 available are the actual sig . ie excluding the linkid(1) and timestamp(6) 
         var sigpart = msgbuf.slice(-6); 
@@ -845,8 +844,6 @@ export class MAVLink extends EventTarget {
         var messageChecksum2 = x25Crc([decoder.crc_extra], messageChecksum); 
     
         if ( receivedChecksum != messageChecksum2 ) { 
-            console.log("messageChecksum:" + messageChecksum.toString(16));
-            console.log("messageChecksum2:" + messageChecksum2.toString(16));
             throw new Error('invalid MAVLink CRC in msgID ' +msgId+ ', got 0x' + receivedChecksum.toString(16) + ' checksum, calculated payload checksum as 0x'+messageChecksum2.toString(16) ); 
         }
     
