@@ -14,8 +14,8 @@
   "scripts": {
     "preinstall": "rm -rf implementations",
     "install": "cd .. && ./gen_js_ecma.sh",
-    "pretest": "cd ../.. && ./test_gen_ecma.sh && npm install",
-    "test": "cd test ; python3 make_tests.py > made_tests.js ; cd .. ; mocha test",
+    "pretest": "cd ../.. && npm_package_scripts_pretest=1 ./test_gen_ecma.sh",
+    "test": "cd test && python3 make_tests.py > made_tests.js && cd .. && mocha test --exit",
     "lint": "./node_modules/.bin/eslint ./implementations/mavlink_common_v1.0/mavlink.js ./implementations/mavlink_common_v2.0/mavlink.js"
   }
 }
