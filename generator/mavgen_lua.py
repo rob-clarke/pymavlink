@@ -201,6 +201,9 @@ end
 ---@param message table -- table containing key value pairs representing the data fields in the message
 ---@return integer -- message id
 ---@return string -- encoded payload
+---@return integer -- min message len
+---@return integer -- max message len
+---@return integer -- crc extra
 function mavlink_msgs.encode(msgname, message)
   local message_map = require("{module_root_rel}mavlink_msg_" .. msgname)
   if not message_map then
@@ -227,7 +230,11 @@ function mavlink_msgs.encode(msgname, message)
       packedIndex = packedIndex + 1
     end
   end
-  return message_map.id, string.pack(packString, table.unpack(packedTable))
+  return message_map.id,
+         string.pack(packString, table.unpack(packedTable)),
+         message_map.min_msg_len,
+         message_map.max_msg_len,
+         message_map.crc_extra
 end
 
 return mavlink_msgs
